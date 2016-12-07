@@ -1,3 +1,0 @@
-/home/krishneel/Documents/programs/gSLICr/build/ORUtils/CMakeFiles/ORUtils.dir
-/home/krishneel/Documents/programs/gSLICr/build/CMakeFiles/demo.dir
-/home/krishneel/Documents/programs/gSLICr/build/CMakeFiles/gSLICr_lib.dir
