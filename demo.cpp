@@ -12,6 +12,9 @@
 #include "opencv2/cudaimgproc.hpp"
 #include "opencv2/cudafilters.hpp"
 
+#include <vector>
+#include <algorithm>
+
 using namespace std;
 using namespace cv;
 
@@ -38,7 +41,11 @@ void load_image(const gSLICr::UChar4Image* inimg, Mat& outimg) {
         }
 }
 
-void edgeBasedClusterFilters(const cv::Mat, const int *);
+
+void edgeBasedClusterFilters(std::vector<bool> &, const cv::Mat, const int *);
+void getBoundingRects(const cv::Mat,
+                      const std::vector<std::vector<cv::Point2f> > &);
+   
 
 int main(int argc, const char *argv[]) {
 
@@ -46,18 +53,19 @@ int main(int argc, const char *argv[]) {
     gSLICr::objects::settings my_settings;
     my_settings.img_size.x = 448;
     my_settings.img_size.y = 448;
-    my_settings.no_segs = 200;
-    my_settings.spixel_size = 32;
-    my_settings.coh_weight = 0.7f;
+    my_settings.no_segs = 300;
+    my_settings.spixel_size = 16;
+    my_settings.coh_weight = 0.8f;
     my_settings.no_iters = 3;
     my_settings.color_space = gSLICr::XYZ;  // gSLICr::CIELAB for Lab,
                                             // or gSLICr::RGB for RGB
-    my_settings.seg_method = gSLICr::GIVEN_SIZE;  // or
+    my_settings.seg_method = gSLICr::GIVEN_NUM;  // or
                                                   // gSLICr::GIVEN_NUM
                                                   // for given number
     my_settings.do_enforce_connectivity = true;  // whether or not run
                                                  // the enforce
                                                  // connectivity step
+
     
     // instantiate a core_engine
     gSLICr::engines::core_engine* gSLICr_engine =
@@ -87,24 +95,32 @@ int main(int argc, const char *argv[]) {
        
        load_image(frame, in_img);
        
-       sdkResetTimer(&my_timer); sdkStartTimer(&my_timer);
+       sdkResetTimer(&my_timer);
+       sdkStartTimer(&my_timer);
        gSLICr_engine->Process_Frame(in_img);
-       sdkStopTimer(&my_timer);
-       cout << "\rsegmentation in:[" << sdkGetTimerValue(&my_timer) << "]ms" << "\n";
+
         
        gSLICr_engine->Draw_Segmentation_Result(out_img);
 		
        load_image(out_img, boundry_draw_frame);
-       cv::namedWindow("segmentation", cv::WINDOW_NORMAL);
-       imshow("segmentation", boundry_draw_frame);
 
        
        //! get mask
        const gSLICr::IntImage *gmask = gSLICr_engine->Get_Seg_Res();
        const int* inimg_ptr = gmask->GetData(MEMORYDEVICE_CPU);
-              
-       cv::RNG rng(0xFFFFFFFF);
 
+       //! filter based on edges
+       std::vector<bool> superpixels_flags;
+       edgeBasedClusterFilters(superpixels_flags, oldFrame, inimg_ptr);
+
+       
+       sdkStopTimer(&my_timer);
+       cout << "\rsegmentation in:[" << sdkGetTimerValue(&my_timer)
+            << "]ms" << "\n";
+
+
+       //! ploting and vizualization
+       cv::RNG rng(0xFFFFFFFF);
        std::vector<cv::Scalar> colors(my_settings.no_segs);
        for (int i = 0; i < colors.size(); i++) {
           cv::Scalar c = cv::Scalar(
@@ -113,48 +129,37 @@ int main(int argc, const char *argv[]) {
              std::abs(static_cast<float>(rng.uniform(0.0, 1.0))));
           colors[i] = c;
        }
+
+
+       const std::vector<std::vector<cv::Point2f> > superpixel_points;
        
        cv::Mat im_mask = cv::Mat::zeros(frame.size(), CV_8UC3);
        for (int y = 0; y < im_mask.rows; y++) {
           for (int x = 0; x < im_mask.cols; x++) {
              int value = inimg_ptr[x + (y * im_mask.cols)];
              cv::Scalar color = colors[value];
-             im_mask.at<cv::Vec3b>(y, x)[0] = color.val[0] * 255;
-             im_mask.at<cv::Vec3b>(y, x)[1] = color.val[1] * 255;
-             im_mask.at<cv::Vec3b>(y, x)[2] = color.val[2] * 255;
+             if (superpixels_flags[x + (y * im_mask.cols)]) {
+                im_mask.at<cv::Vec3b>(y, x)[0] = color.val[0] * 255;
+                im_mask.at<cv::Vec3b>(y, x)[1] = color.val[1] * 255;
+                im_mask.at<cv::Vec3b>(y, x)[2] = color.val[2] * 255;
+             }
           }
        }
 
-       edgeBasedClusterFilters(oldFrame, inimg_ptr);
-       
+       cv::namedWindow("segmentation", cv::WINDOW_NORMAL);
+       imshow("segmentation", boundry_draw_frame);
        
        cv::namedWindow("mask", cv::WINDOW_NORMAL);
        cv::imshow("mask", im_mask);
-       
        cv::waitKey(0);
-       
-       // key = waitKey(1);
-       // if (key == 27) break;
-       // else if (key == 's')
-       // {
-       // 	char out_name[100];
-       // 	sprintf(out_name, "seg_%04i.pgm", save_count);
-       // 	gSLICr_engine->Write_Seg_Res_To_PGM(out_name);
-       // 	sprintf(out_name, "edge_%04i.png", save_count);
-       // 	imwrite(out_name, boundry_draw_frame);
-       // 	sprintf(out_name, "img_%04i.png", save_count);
-       // 	imwrite(out_name, frame);
-       // 	printf("\nsaved segmentation %04i\n", save_count);
-       // 	save_count++;
-       // }
     }
-
     destroyAllWindows();
     return 0;
 }
 
 
-void edgeBasedClusterFilters(const cv::Mat image,
+void edgeBasedClusterFilters(std::vector<bool> &superpixels_flag,
+                             const cv::Mat image,
                              const int *gmask) {
     if (image.empty()) {
        cout << "EMPTY INPUT IMAGE"  << "\n";
@@ -172,11 +177,12 @@ void edgeBasedClusterFilters(const cv::Mat image,
        cv::cuda::createGaussianFilter(d_gray.type(), -1, cv::Size(9, 9), 1, 1);
     gauss->apply(d_gray, d_gray);
     canny->detect(d_gray, d_edges);
+
     
     cv::Mat edges;
     d_edges.download(edges);
-
-
+    
+    
     //! traverse the edges
     std::vector<int> sp_indices;
     int index = -1;
@@ -191,8 +197,55 @@ void edgeBasedClusterFilters(const cv::Mat image,
        }
     }
 
-    cout << "SIZE: " << sp_indices.size()  << "\n";
     
-    cv::imshow("edges", edges);
+    //! sort the indices
+    std::sort(sp_indices.begin(), sp_indices.end(), std::less<int>());
 
+    //! remove duplicates
+    sp_indices.erase(std::unique(sp_indices.begin(), sp_indices.end()),
+                     sp_indices.end());
+    
+    //! flag superpixels
+    superpixels_flag.clear();
+    superpixels_flag.resize(static_cast<int>(image.rows * image.cols), false);
+
+    //! memory for 2d image points
+    std::vector<std::vector<cv::Point2f> > superpixel_points(
+       static_cast<int>(sp_indices.size()));
+
+    for (int i = 0; i < sp_indices.size(); i++) {
+       int x = 0;
+       int y = 0;
+       for (int j = 0; j < image.rows * image.cols; j++) {
+          if (gmask[j] == sp_indices[i]) {
+             superpixels_flag[j] = true;
+             superpixel_points[i].push_back(cv::Point2f(x, y));
+          }
+          
+          if (x++ > image.cols - 1) {
+             x = 0;
+             if (y++ > image.rows - 1) {
+                y = 0;
+             }
+          }
+       }
+    }
+
+    getBoundingRects(image, superpixel_points);
+    
+}
+
+
+void getBoundingRects(const cv::Mat image,
+                      const std::vector<
+                      std::vector<cv::Point2f> > &superpixel_points) {
+
+    cv::Mat img = image.clone();
+    for (int i = 0; i < superpixel_points.size(); i++) {
+       cv::Rect rect = cv::boundingRect(superpixel_points[i]);
+       cv::rectangle(img, rect, cv::Scalar(0, 255, 0), 2);
+    }
+    
+    cv::namedWindow("rects", cv::WINDOW_NORMAL);
+    cv::imshow("rects", img);
 }
