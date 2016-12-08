@@ -9,40 +9,36 @@
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/core/core.hpp"
 #include "opencv2/opencv.hpp"
-
-
+#include "opencv2/cudaimgproc.hpp"
+#include "opencv2/cudafilters.hpp"
 
 using namespace std;
 using namespace cv;
 
-void load_image(const Mat& inimg, gSLICr::UChar4Image* outimg)
-{
-	gSLICr::Vector4u* outimg_ptr = outimg->GetData(MEMORYDEVICE_CPU);
+void load_image(const Mat& inimg, gSLICr::UChar4Image* outimg) {
+    gSLICr::Vector4u* outimg_ptr = outimg->GetData(MEMORYDEVICE_CPU);
 
-	for (int y = 0; y < outimg->noDims.y;y++)
-		for (int x = 0; x < outimg->noDims.x; x++)
-		{
-			int idx = x + y * outimg->noDims.x;
-			outimg_ptr[idx].b = inimg.at<Vec3b>(y, x)[0];
-			outimg_ptr[idx].g = inimg.at<Vec3b>(y, x)[1];
-			outimg_ptr[idx].r = inimg.at<Vec3b>(y, x)[2];
-		}
+    for (int y = 0; y < outimg->noDims.y; y++)
+       for (int x = 0; x < outimg->noDims.x; x++) {
+          int idx = x + y * outimg->noDims.x;
+          outimg_ptr[idx].b = inimg.at<Vec3b>(y, x)[0];
+          outimg_ptr[idx].g = inimg.at<Vec3b>(y, x)[1];
+          outimg_ptr[idx].r = inimg.at<Vec3b>(y, x)[2];
+       }
 }
 
-void load_image(const gSLICr::UChar4Image* inimg, Mat& outimg)
-{
-	const gSLICr::Vector4u* inimg_ptr = inimg->GetData(MEMORYDEVICE_CPU);
-
-	for (int y = 0; y < inimg->noDims.y; y++)
-		for (int x = 0; x < inimg->noDims.x; x++)
-		{
-			int idx = x + y * inimg->noDims.x;
-			outimg.at<Vec3b>(y, x)[0] = inimg_ptr[idx].b;
-			outimg.at<Vec3b>(y, x)[1] = inimg_ptr[idx].g;
-			outimg.at<Vec3b>(y, x)[2] = inimg_ptr[idx].r;
-		}
+void load_image(const gSLICr::UChar4Image* inimg, Mat& outimg) {
+    const gSLICr::Vector4u* inimg_ptr = inimg->GetData(MEMORYDEVICE_CPU);
+     for (int y = 0; y < inimg->noDims.y; y++)
+        for (int x = 0; x < inimg->noDims.x; x++) {
+           int idx = x + y * inimg->noDims.x;
+           outimg.at<Vec3b>(y, x)[0] = inimg_ptr[idx].b;
+           outimg.at<Vec3b>(y, x)[1] = inimg_ptr[idx].g;
+           outimg.at<Vec3b>(y, x)[2] = inimg_ptr[idx].r;
+        }
 }
 
+void edgeBasedClusterFilters(const cv::Mat, const int *);
 
 int main(int argc, const char *argv[]) {
 
@@ -52,7 +48,7 @@ int main(int argc, const char *argv[]) {
     my_settings.img_size.y = 448;
     my_settings.no_segs = 200;
     my_settings.spixel_size = 32;
-    my_settings.coh_weight = 0.6f;
+    my_settings.coh_weight = 0.7f;
     my_settings.no_iters = 3;
     my_settings.color_space = gSLICr::XYZ;  // gSLICr::CIELAB for Lab,
                                             // or gSLICr::RGB for RGB
@@ -80,7 +76,7 @@ int main(int argc, const char *argv[]) {
     oldFrame = cv::imread(argv[1]);
     cv::resize(oldFrame, oldFrame,
                cv::Size(my_settings.img_size.x, my_settings.img_size.y));
-    cv::GaussianBlur(oldFrame, oldFrame, cv::Size(3, 3), 1, 0);
+    // cv::GaussianBlur(oldFrame, oldFrame, cv::Size(3, 3), 1, 0);
     
     StopWatchInterface *my_timer; sdkCreateTimer(&my_timer);
     
@@ -94,7 +90,7 @@ int main(int argc, const char *argv[]) {
        sdkResetTimer(&my_timer); sdkStartTimer(&my_timer);
        gSLICr_engine->Process_Frame(in_img);
        sdkStopTimer(&my_timer);
-       // cout << "\rsegmentation in:[" << sdkGetTimerValue(&my_timer) << "]ms" << flush;
+       cout << "\rsegmentation in:[" << sdkGetTimerValue(&my_timer) << "]ms" << "\n";
         
        gSLICr_engine->Draw_Segmentation_Result(out_img);
 		
@@ -107,7 +103,7 @@ int main(int argc, const char *argv[]) {
        const gSLICr::IntImage *gmask = gSLICr_engine->Get_Seg_Res();
        const int* inimg_ptr = gmask->GetData(MEMORYDEVICE_CPU);
               
-       cv::RNG rng( 0xFFFFFFFF );
+       cv::RNG rng(0xFFFFFFFF);
 
        std::vector<cv::Scalar> colors(my_settings.no_segs);
        for (int i = 0; i < colors.size(); i++) {
@@ -117,27 +113,26 @@ int main(int argc, const char *argv[]) {
              std::abs(static_cast<float>(rng.uniform(0.0, 1.0))));
           colors[i] = c;
        }
+       
        cv::Mat im_mask = cv::Mat::zeros(frame.size(), CV_8UC3);
        for (int y = 0; y < im_mask.rows; y++) {
           for (int x = 0; x < im_mask.cols; x++) {
              int value = inimg_ptr[x + (y * im_mask.cols)];
-
              cv::Scalar color = colors[value];
-             
              im_mask.at<cv::Vec3b>(y, x)[0] = color.val[0] * 255;
              im_mask.at<cv::Vec3b>(y, x)[1] = color.val[1] * 255;
              im_mask.at<cv::Vec3b>(y, x)[2] = color.val[2] * 255;
-
-
-                // cout << inimg_ptr[x + (y * im_mask.cols)] << " ";
           }
-          // cout  << "\n";
        }
 
+       edgeBasedClusterFilters(oldFrame, inimg_ptr);
+       
+       
        cv::namedWindow("mask", cv::WINDOW_NORMAL);
        cv::imshow("mask", im_mask);
        
        cv::waitKey(0);
+       
        // key = waitKey(1);
        // if (key == 27) break;
        // else if (key == 's')
@@ -156,4 +151,48 @@ int main(int argc, const char *argv[]) {
 
     destroyAllWindows();
     return 0;
+}
+
+
+void edgeBasedClusterFilters(const cv::Mat image,
+                             const int *gmask) {
+    if (image.empty()) {
+       cout << "EMPTY INPUT IMAGE"  << "\n";
+       return;
+    }
+
+    double low_thresh = 20.0;
+    double high_thresh = 100.0;
+    cv::Ptr<cv::cuda::CannyEdgeDetector> canny =
+       cv::cuda::createCannyEdgeDetector(low_thresh, high_thresh, 3, true);
+    cv::cuda::GpuMat d_edges;
+    cv::cuda::GpuMat d_gray;
+    cv::cuda::cvtColor(cv::cuda::GpuMat(image), d_gray, cv::COLOR_BGR2GRAY);
+    cv::Ptr<cv::cuda::Filter> gauss =
+       cv::cuda::createGaussianFilter(d_gray.type(), -1, cv::Size(9, 9), 1, 1);
+    gauss->apply(d_gray, d_gray);
+    canny->detect(d_gray, d_edges);
+    
+    cv::Mat edges;
+    d_edges.download(edges);
+
+
+    //! traverse the edges
+    std::vector<int> sp_indices;
+    int index = -1;
+    int prev_index = -1;
+    for (int j = 0; j < edges.rows; j++) {
+       for (int i = 0; i < edges.cols; i++) {
+          index = gmask[i + (j * edges.cols)];
+          if (edges.at<uchar>(j, i) > 0 && index != prev_index) {
+             sp_indices.push_back(index);
+          }
+          prev_index = index;
+       }
+    }
+
+    cout << "SIZE: " << sp_indices.size()  << "\n";
+    
+    cv::imshow("edges", edges);
+
 }
