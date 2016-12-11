@@ -42,9 +42,12 @@ void load_image(const gSLICr::UChar4Image* inimg, Mat& outimg) {
 }
 
 
-void edgeBasedClusterFilters(std::vector<bool> &, const cv::Mat, const int *);
+int edgeBasedClusterFilters(std::vector<bool> &, const cv::Mat, const int *);
 void getBoundingRects(const cv::Mat,
-                      const std::vector<std::vector<cv::Point2f> > &);
+                      const std::map<int, std::vector<cv::Point2f> > &);
+
+//! minimum size
+const int MIN_CLUSTER_SIZE_ = 32;
    
 
 int main(int argc, const char *argv[]) {
@@ -111,7 +114,8 @@ int main(int argc, const char *argv[]) {
 
        //! filter based on edges
        std::vector<bool> superpixels_flags;
-       edgeBasedClusterFilters(superpixels_flags, oldFrame, inimg_ptr);
+       int ssize = edgeBasedClusterFilters(
+          superpixels_flags, oldFrame, inimg_ptr);
 
        
        sdkStopTimer(&my_timer);
@@ -131,8 +135,9 @@ int main(int argc, const char *argv[]) {
        }
 
 
-       const std::vector<std::vector<cv::Point2f> > superpixel_points;
-       
+       // std::vector<std::vector<cv::Point2f> > superpixel_points(ssize);
+       std::map<int, std::vector<cv::Point2f> > superpixel_points;
+              
        cv::Mat im_mask = cv::Mat::zeros(frame.size(), CV_8UC3);
        for (int y = 0; y < im_mask.rows; y++) {
           for (int x = 0; x < im_mask.cols; x++) {
@@ -142,10 +147,16 @@ int main(int argc, const char *argv[]) {
                 im_mask.at<cv::Vec3b>(y, x)[0] = color.val[0] * 255;
                 im_mask.at<cv::Vec3b>(y, x)[1] = color.val[1] * 255;
                 im_mask.at<cv::Vec3b>(y, x)[2] = color.val[2] * 255;
+
+                superpixel_points[value].push_back(cv::Point2f(x, y));
+                
+                // superpixel_points[i].push_back(cv::Point2f(x, y));
              }
           }
        }
 
+       getBoundingRects(oldFrame, superpixel_points);
+       
        cv::namedWindow("segmentation", cv::WINDOW_NORMAL);
        imshow("segmentation", boundry_draw_frame);
        
@@ -158,12 +169,12 @@ int main(int argc, const char *argv[]) {
 }
 
 
-void edgeBasedClusterFilters(std::vector<bool> &superpixels_flag,
+int edgeBasedClusterFilters(std::vector<bool> &superpixels_flag,
                              const cv::Mat image,
                              const int *gmask) {
     if (image.empty()) {
        cout << "EMPTY INPUT IMAGE"  << "\n";
-       return;
+       return -1;
     }
 
     double low_thresh = 20.0;
@@ -209,43 +220,39 @@ void edgeBasedClusterFilters(std::vector<bool> &superpixels_flag,
     superpixels_flag.clear();
     superpixels_flag.resize(static_cast<int>(image.rows * image.cols), false);
 
-    //! memory for 2d image points
-    std::vector<std::vector<cv::Point2f> > superpixel_points(
-       static_cast<int>(sp_indices.size()));
-
     for (int i = 0; i < sp_indices.size(); i++) {
-       int x = 0;
-       int y = 0;
        for (int j = 0; j < image.rows * image.cols; j++) {
           if (gmask[j] == sp_indices[i]) {
              superpixels_flag[j] = true;
-             superpixel_points[i].push_back(cv::Point2f(x, y));
-          }
-          
-          if (x++ > image.cols - 1) {
-             x = 0;
-             if (y++ > image.rows - 1) {
-                y = 0;
-             }
           }
        }
     }
-
-    getBoundingRects(image, superpixel_points);
     
+    return static_cast<int>(sp_indices.size());
 }
 
 
 void getBoundingRects(const cv::Mat image,
-                      const std::vector<
+                      const std::map<int,
                       std::vector<cv::Point2f> > &superpixel_points) {
 
     cv::Mat img = image.clone();
-    for (int i = 0; i < superpixel_points.size(); i++) {
-       cv::Rect rect = cv::boundingRect(superpixel_points[i]);
-       cv::rectangle(img, rect, cv::Scalar(0, 255, 0), 2);
+    int rejected_counter = 0;
+    for (std::map<int, std::vector<cv::Point2f> >::const_iterator it =
+            superpixel_points.begin(); it != superpixel_points.end(); it++) {
+       cv::Rect rect = cv::boundingRect(it->second);
+       if (rect.width > MIN_CLUSTER_SIZE_ && rect.height > MIN_CLUSTER_SIZE_) {
+          cv::rectangle(img, rect, cv::Scalar(0, 255, 0), 1);
+       } else {
+          // cv::rectangle(img, rect, cv::Scalar(0, 0, 255), 1);
+          rejected_counter++;
+       }
     }
-    
+
+    cout << "TOTAL SIZE: " << superpixel_points.size() << " "
+         << rejected_counter  << "\n";
+
     cv::namedWindow("rects", cv::WINDOW_NORMAL);
     cv::imshow("rects", img);
+    // cv::waitKey(0);
 }
