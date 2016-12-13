@@ -15,7 +15,7 @@ project(gSLICr)
 # endif(APPLE)
 
 find_package(CUDA REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(OpenCV 3 REQUIRED)
 
 include_directories(${CUDA_INCLUDE_DIRS})
 include_directories(${OpenCV_INCLUDE_DIRS})
@@ -41,7 +41,7 @@ SOURCE_GROUP(engines FILES ${GSLICR_LIB})
 cuda_add_library(gSLICr_lib
 			${GSLICR_LIB}
 			NVTimer.h
-			OPTIONS -gencode arch=compute_30,code=compute_30)
+			OPTIONS -gencode arch=compute_50,code=compute_50)
 target_link_libraries(gSLICr_lib ${CUDA_LIBRARY})
 
 add_executable(demo demo.cpp)
