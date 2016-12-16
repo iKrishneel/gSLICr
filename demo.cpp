@@ -10,6 +10,8 @@
 #include "opencv2/cudaimgproc.hpp"
 #include "opencv2/cudafilters.hpp"
 
+#include <boost/foreach.hpp>
+
 #include <vector>
 #include <algorithm>
 
@@ -43,9 +45,11 @@ void load_image(const gSLICr::UChar4Image* inimg, Mat& outimg) {
 int edgeBasedClusterFilters(std::vector<bool> &, const cv::Mat, const int *);
 void getBoundingRects(std::vector<cv::Rect_<int> > &, const cv::Mat,
                       const std::map<int, std::vector<cv::Point2f> > &);
-
+void rankBoxProposals(const cv::Mat, const cv::cuda::GpuMat,
+                      const std::vector<cv::Rect_<int> >);
+    
 //! minimum size
-const int MIN_CLUSTER_SIZE_ = 32/2;
+const int MIN_CLUSTER_SIZE_ = 32;
    
 
 int main(int argc, const char *argv[]) {
@@ -113,7 +117,6 @@ int main(int argc, const char *argv[]) {
     
     cv::Mat im_edges;
     d_edges.download(im_edges);
-
     
     
     StopWatchInterface *my_timer; sdkCreateTimer(&my_timer);
@@ -159,7 +162,6 @@ int main(int argc, const char *argv[]) {
         colors[i] = c;
     }
 
-
     // std::vector<std::vector<cv::Point2f> > superpixel_points(ssize);
     std::map<int, std::vector<cv::Point2f> > superpixel_points;
               
@@ -183,6 +185,11 @@ int main(int argc, const char *argv[]) {
     std::vector<cv::Rect_<int> > box_proposals;
     getBoundingRects(box_proposals, oldFrame, superpixel_points);
 
+
+    //!
+    rankBoxProposals(oldFrame, d_edges, box_proposals);
+    
+    
        
     std::cout << "# of proposals: " << superpixel_points.size()
               << " " << box_proposals.size() << "\n";
@@ -205,25 +212,11 @@ int edgeBasedClusterFilters(std::vector<bool> &superpixels_flag,
        return -1;
     }
     
-    // double low_thresh = 20.0;
-    // double high_thresh = 100.0;
-    // cv::Ptr<cv::cuda::CannyEdgeDetector> canny =
-    //    cv::cuda::createCannyEdgeDetector(low_thresh, high_thresh, 3, true);
-    // cv::cuda::GpuMat d_edges;
-    // cv::cuda::GpuMat d_gray;
-    // cv::cuda::cvtColor(cv::cuda::GpuMat(image), d_gray, cv::COLOR_BGR2GRAY);
-    // cv::Ptr<cv::cuda::Filter> gauss =
-    //     cv::cuda::createGaussianFilter(d_gray.type(), -1, cv::Size(9, 9), 1, 1);
-    // gauss->apply(d_gray, d_gray);
-    // canny->detect(d_gray, d_edges);
-    
-    // cv::Mat edges;
-    // d_edges.download(edges);
-    
     //! traverse the edges
     std::vector<int> sp_indices;
     int index = -1;
     int prev_index = -1;
+
     for (int j = 0; j < image.rows; j++) {
        for (int i = 0; i < image.cols; i++) {
           index = gmask[i + (j * image.cols)];
@@ -286,6 +279,30 @@ void getBoundingRects(std::vector<cv::Rect_<int> > &box_proposals,
 
 
 void rankBoxProposals(
-    const cv::Mat image, const std::vector<cv::Rect_<int> > box_proposals) {
-    
+    const cv::Mat image, const cv::cuda::GpuMat d_edges,
+    const std::vector<cv::Rect_<int> > box_proposals) {
+    if (image.empty() || d_edges.empty()) {
+        std::cout << "ERROR: [rankBoxProposals]Empty inputs!" << "\n";
+        return;
+    }
+
+    //! temp on CPU
+    cv::Mat im_edges;
+    d_edges.download(im_edges);
+
+    const int padding = 0;
+    cv::Rect_<int> box;
+    BOOST_FOREACH(cv::Rect_<int> rect, box_proposals) {
+        box.x = rect.x - padding;
+        box.y = rect.y - padding;
+        box.width = rect.width + (2 * padding);
+        box.height = rect.height + (2 * padding);
+
+        
+        
+        cv::Mat roi = im_edges(box);
+        cv::namedWindow("boxes", cv::WINDOW_NORMAL);
+        cv::imshow("boxes", roi);
+        cv::waitKey(0);
+    }
 }
