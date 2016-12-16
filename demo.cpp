@@ -9,6 +9,7 @@
 #include "opencv2/opencv.hpp"
 #include "opencv2/cudaimgproc.hpp"
 #include "opencv2/cudafilters.hpp"
+#include "opencv2/cudawarping.hpp"
 
 #include <boost/foreach.hpp>
 
@@ -206,7 +207,7 @@ int main(int argc, const char *argv[]) {
 }
 
 int edgeBasedClusterFilters(std::vector<bool> &superpixels_flag,
-                             const cv::Mat image, const int *gmask) {
+                            const cv::Mat image, const int *gmask) {
     if (image.empty()) {
        cout << "EMPTY INPUT IMAGE"  << "\n";
        return -1;
@@ -222,7 +223,7 @@ int edgeBasedClusterFilters(std::vector<bool> &superpixels_flag,
           index = gmask[i + (j * image.cols)];
           if (image.at<uchar>(j, i) > 0 && index != prev_index) {
              sp_indices.push_back(index);
-          }   
+          }
           prev_index = index;
        }
     }
@@ -253,7 +254,6 @@ int edgeBasedClusterFilters(std::vector<bool> &superpixels_flag,
 void getBoundingRects(std::vector<cv::Rect_<int> > &box_proposals,
                       const cv::Mat image, const std::map<int,
                       std::vector<cv::Point2f> > &superpixel_points) {
-
     cv::Mat img = image.clone();
     int rejected_counter = 0;
     for (std::map<int, std::vector<cv::Point2f> >::const_iterator it =
@@ -277,6 +277,62 @@ void getBoundingRects(std::vector<cv::Rect_<int> > &box_proposals,
     // cv::waitKey(0);
 }
 
+/**
+ * function to scale and rotate the box proposals
+ */
+void warpBoxProposals(std::vector<cv::Rect_<int> > &warped_rects,
+                      const cv::Rect_<int> pbox, const cv::Size size_im,
+                      const int levels, const float scale_step = 1.10f) {
+    warped_rects.clear();
+    if (levels == 0 || scale_step < 0.0) {
+       warped_rects.push_back(pbox);
+       return;
+    }
+
+    cv::Mat image = cv::Mat::zeros(size_im, CV_8UC3);
+    
+    
+    const int octave = std::floor(levels/2);
+    float step = 0.0f;
+    cv::Rect_<int> rect;
+
+    int count = 0;
+    for (int k = -octave; k < octave; k++, count ++) {
+       step = std::pow(scale_step, k);
+       cv::Point center(pbox.x + pbox.width/2, pbox.y + pbox.height/2);
+       rect.width = pbox.width * step;
+       rect.height = pbox.height * step;
+
+       rect.x = center.x - (rect.width/2);
+       rect.y = center.y - (rect.height/2);
+       
+       rect.x = (rect.x < 0) ? 0: rect.x;
+       rect.y = (rect.y < 0) ? 0: rect.y;
+       rect.width -= (rect.br().x > size_im.width) ?
+          (rect.br().x - size_im.width) : 0;
+       rect.height -= (rect.br().y > size_im.height) ?
+          (rect.br().y - size_im.height) : 0;
+       
+       warped_rects.push_back(rect);
+
+       //! rotate the box by pi/2
+       if (k != 0) {
+          warped_rects.push_back(
+             cv::RotatedRect(
+                cv::Point(rect.x + rect.width/2, rect.y + rect.height/2),
+                rect.size(), 90).boundingRect());
+       }
+
+       cout << count << "\t" << k  << "\n";
+       cv::rectangle(image, warped_rects[count], cv::Scalar(0, 255, 0), 1);
+       cv::rectangle(image, warped_rects[count++], cv::Scalar(0, 0, 255), 1);
+       
+       cv::imshow("warped", image);
+        cv::waitKey(0);
+    }
+
+}
+
 
 void rankBoxProposals(
     const cv::Mat image, const cv::cuda::GpuMat d_edges,
@@ -292,12 +348,16 @@ void rankBoxProposals(
 
     const int padding = 0;
     cv::Rect_<int> box;
+    std::vector<cv::Rect_<int> > warped_rects;
     BOOST_FOREACH(cv::Rect_<int> rect, box_proposals) {
         box.x = rect.x - padding;
         box.y = rect.y - padding;
         box.width = rect.width + (2 * padding);
         box.height = rect.height + (2 * padding);
 
+        
+
+        warpBoxProposals(warped_rects, box, image.size(), 4, 1.2);
         
         
         cv::Mat roi = im_edges(box);
