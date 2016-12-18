@@ -121,10 +121,7 @@ int main(int argc, const char *argv[]) {
     
     
     StopWatchInterface *my_timer; sdkCreateTimer(&my_timer);
-    
-    int key; int save_count = 0;
-    // while (cap.read(oldFrame))
-    // {
+
     resize(oldFrame, frame, s);
        
     load_image(frame, in_img);
@@ -288,16 +285,12 @@ void warpBoxProposals(std::vector<cv::Rect_<int> > &warped_rects,
        warped_rects.push_back(pbox);
        return;
     }
-
-    cv::Mat image = cv::Mat::zeros(size_im, CV_8UC3);
-    
     
     const int octave = std::floor(levels/2);
     float step = 0.0f;
     cv::Rect_<int> rect;
 
-    int count = 0;
-    for (int k = -octave; k < octave; k++, count ++) {
+    for (int k = -octave; k < octave; k++) {
        step = std::pow(scale_step, k);
        cv::Point center(pbox.x + pbox.width/2, pbox.y + pbox.height/2);
        rect.width = pbox.width * step;
@@ -314,23 +307,13 @@ void warpBoxProposals(std::vector<cv::Rect_<int> > &warped_rects,
           (rect.br().y - size_im.height) : 0;
        
        warped_rects.push_back(rect);
-
-       //! rotate the box by pi/2
        if (k != 0) {
           warped_rects.push_back(
              cv::RotatedRect(
                 cv::Point(rect.x + rect.width/2, rect.y + rect.height/2),
                 rect.size(), 90).boundingRect());
        }
-
-       cout << count << "\t" << k  << "\n";
-       cv::rectangle(image, warped_rects[count], cv::Scalar(0, 255, 0), 1);
-       cv::rectangle(image, warped_rects[count++], cv::Scalar(0, 0, 255), 1);
-       
-       cv::imshow("warped", image);
-        cv::waitKey(0);
     }
-
 }
 
 
@@ -355,9 +338,9 @@ void rankBoxProposals(
         box.width = rect.width + (2 * padding);
         box.height = rect.height + (2 * padding);
 
-        
-
-        warpBoxProposals(warped_rects, box, image.size(), 4, 1.2);
+        // TODO(HERE): pass probability map directly and return the
+        // top k ranks for the boxes in the octave
+        warpBoxProposals(warped_rects, box, image.size(), 5, 1.2);
         
         
         cv::Mat roi = im_edges(box);
